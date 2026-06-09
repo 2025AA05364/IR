@@ -183,13 +183,21 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 # NLP helpers
 # ─────────────────────────────────────────────────────────────────────────────
-STOPWORDS = set(stopwords.words("english"))
-stemmer = PorterStemmer()
+try:
+    STOPWORDS = set(stopwords.words("english"))
+except Exception:
+    STOPWORDS = set()
+
+stemmer    = PorterStemmer()
 lemmatizer = WordNetLemmatizer()
 
 
 def tokenize(text):
-    return word_tokenize(text.lower())
+    """Tokenize text; falls back to simple split if NLTK punkt is unavailable."""
+    try:
+        return word_tokenize(text.lower())
+    except Exception:
+        return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
 
 def basic_preprocess(tokens, lowercase=True, remove_sw=True,
@@ -212,6 +220,7 @@ def basic_preprocess(tokens, lowercase=True, remove_sw=True,
     return result
 
 
+@st.cache_data
 def build_inverted_index(docs):
     index = defaultdict(list)
     for doc_id, tokens in docs.items():
@@ -220,6 +229,7 @@ def build_inverted_index(docs):
     return dict(index)
 
 
+@st.cache_data
 def build_positional_index(docs):
     index = defaultdict(lambda: defaultdict(list))
     for doc_id, tokens in docs.items():
@@ -228,6 +238,7 @@ def build_positional_index(docs):
     return {k: dict(v) for k, v in index.items()}
 
 
+@st.cache_data
 def build_biword_index(docs):
     index = defaultdict(list)
     for doc_id, tokens in docs.items():
@@ -676,7 +687,11 @@ with tabs[2]:
                                  placeholder="e.g. positional index")
 
         if phrase_q.strip():
-            q = phrase_q.lower().strip()
+            # Lemmatize each query word (without stop-word removal) so the
+            # query vocabulary matches the lemmatized document index.
+            raw_words = re.sub(r"[^a-z\s]", "", phrase_q.lower().strip()).split()
+            q_words   = [lemmatizer.lemmatize(w) for w in raw_words if w]
+            q = " ".join(q_words) if q_words else phrase_q.lower().strip()
 
             t0 = time.perf_counter(); bw_res  = phrase_query_biword(q, biword_idx);    bw_ms  = (time.perf_counter()-t0)*1000
             t0 = time.perf_counter(); pos_res = phrase_query_positional(q, pos_idx); pos_ms = (time.perf_counter()-t0)*1000

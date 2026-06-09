@@ -31,7 +31,7 @@ The app opens in your browser at `http://localhost:8501`.
 
 ## Usage
 
-1. **Dataset** – Upload your own `.txt` files via the sidebar, or use the built-in 10-document demo dataset.
+1. **Dataset** – Upload your own `.txt` files via the sidebar, or use the built-in 15-document demo dataset.
 2. Navigate through the six tabs to explore each IR component.
 3. All options (preprocessing flags, query input, tree parameters) are interactive.
 
