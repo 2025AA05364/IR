@@ -15,6 +15,19 @@ import io
 from collections import defaultdict
 from nltk.metrics.distance import edit_distance
 
+# Optional format parsers (graceful fallback if not installed)
+try:
+    import pdfplumber
+    _PDF_OK = True
+except ImportError:
+    _PDF_OK = False
+
+try:
+    from docx import Document as DocxDocument
+    _DOCX_OK = True
+except ImportError:
+    _DOCX_OK = False
+
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -449,6 +462,79 @@ def make_sample_zip():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Multi-format file parser
+# ─────────────────────────────────────────────────────────────────────────────
+def _extract_text_from_bytes(name: str, data: bytes) -> dict:
+    """Return {doc_name: text_content} for a single uploaded file.
+    Supported: .txt  .csv  .pdf  .docx  .zip (recursively parsed)
+    """
+    ext = os.path.splitext(name)[1].lower()
+    results = {}
+
+    if ext == ".txt":
+        results[name] = data.decode("utf-8", errors="ignore")
+
+    elif ext == ".csv":
+        try:
+            df = pd.read_csv(io.BytesIO(data), dtype=str).fillna("")
+            # Each row becomes its own document; fall back to whole-file if tiny
+            if len(df) > 1:
+                for idx, row in df.iterrows():
+                    results[f"{name}__row{idx+1}"] = " ".join(row.astype(str).tolist())
+            else:
+                results[name] = " ".join(df.to_string(index=False).split())
+        except Exception as e:
+            results[name] = data.decode("utf-8", errors="ignore")
+
+    elif ext == ".pdf":
+        if _PDF_OK:
+            try:
+                text_pages = []
+                with pdfplumber.open(io.BytesIO(data)) as pdf:
+                    for page in pdf.pages:
+                        t = page.extract_text()
+                        if t:
+                            text_pages.append(t)
+                results[name] = "\n".join(text_pages) if text_pages else "(no extractable text)"
+            except Exception as e:
+                results[name] = f"(PDF parse error: {e})"
+        else:
+            results[name] = "(pdfplumber not installed — run: pip install pdfplumber)"
+
+    elif ext == ".docx":
+        if _DOCX_OK:
+            try:
+                doc = DocxDocument(io.BytesIO(data))
+                results[name] = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except Exception as e:
+                results[name] = f"(DOCX parse error: {e})"
+        else:
+            results[name] = "(python-docx not installed — run: pip install python-docx)"
+
+    elif ext == ".zip":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for entry in zf.namelist():
+                    if entry.endswith("/"):
+                        continue  # skip directories
+                    inner_data = zf.read(entry)
+                    inner_name = os.path.basename(entry) or entry
+                    nested = _extract_text_from_bytes(inner_name, inner_data)
+                    results.update(nested)
+        except Exception as e:
+            results[name] = f"(ZIP parse error: {e})"
+
+    else:
+        # Try plain-text decode as last resort
+        try:
+            results[name] = data.decode("utf-8", errors="ignore")
+        except Exception:
+            results[name] = "(unsupported format)"
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Session state
 # ─────────────────────────────────────────────────────────────────────────────
 for key in ["raw_docs", "doc_names"]:
@@ -475,9 +561,10 @@ with st.sidebar:
 
     # Upload
     st.markdown("**Upload your own documents**")
+    st.caption("Supported: `.txt` · `.csv` · `.pdf` · `.docx` · `.zip` (containing any of the above)")
     uploaded_files = st.file_uploader(
-        "Upload .txt files (one per document)",
-        type=["txt"],
+        "Upload documents",
+        type=["txt", "csv", "pdf", "docx", "zip"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
@@ -486,10 +573,22 @@ with st.sidebar:
     st.markdown("---")
 
     if uploaded_files:
-        raw_docs = {f.name: f.read().decode("utf-8", errors="ignore") for f in uploaded_files}
-        st.session_state.raw_docs = raw_docs
-        st.session_state.doc_names = list(raw_docs.keys())
-        st.success(f"✅ {len(raw_docs)} document(s) loaded")
+        raw_docs = {}
+        parse_errors = []
+        for f in uploaded_files:
+            data = f.read()
+            parsed = _extract_text_from_bytes(f.name, data)
+            for doc_name, text in parsed.items():
+                if text.strip():
+                    raw_docs[doc_name] = text
+                else:
+                    parse_errors.append(doc_name)
+        if raw_docs:
+            st.session_state.raw_docs = raw_docs
+            st.session_state.doc_names = list(raw_docs.keys())
+            st.success(f"✅ {len(raw_docs)} document(s) loaded")
+        if parse_errors:
+            st.warning(f"⚠️ Skipped {len(parse_errors)} empty/unreadable file(s).")
     elif use_demo:
         st.session_state.raw_docs = DEMO_DOCS
         st.session_state.doc_names = list(DEMO_DOCS.keys())
@@ -545,7 +644,8 @@ if raw_docs:
 # ─────────────────────────────────────────────────────────────────────────────
 tabs = st.tabs([
     "📄 Documents",
-    "🔧 Preprocessing",
+    "🔍 Search & Retrieval",
+    " Preprocessing",
     "🔎 Phrase Query",
     "🌲 BST vs B-Tree",
     "🩹 Tolerant Retrieval",
@@ -574,9 +674,160 @@ with tabs[0]:
                 st.markdown(f'<div style="background:#f8f9ff;border-radius:8px;padding:1rem;font-size:0.9rem;line-height:1.6">{content}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 1 – Preprocessing
+# TAB 1 – Search & Retrieval  (main interactive hub)
 # ════════════════════════════════════════════════════════════════════════════
 with tabs[1]:
+    st.markdown('<p class="section-header">Interactive Search & Retrieval</p>', unsafe_allow_html=True)
+
+    if not raw_docs:
+        st.markdown('<div class="result-box warn">⚠️ Upload documents or enable the demo dataset from the sidebar.</div>', unsafe_allow_html=True)
+    else:
+        # ── Build all indexes once ────────────────────────────────────────────
+        _sr_stem_docs  = {i: basic_preprocess(tokenize(t), stem=True)  for i, t in enumerate(raw_docs.values())}
+        _sr_lem_docs   = {i: basic_preprocess(tokenize(t), lemma=True) for i, t in enumerate(raw_docs.values())}
+        _sr_inv_stem   = build_inverted_index(_sr_stem_docs)
+        _sr_inv_lem    = build_inverted_index(_sr_lem_docs)
+        _sr_biword     = build_biword_index(_sr_lem_docs)
+        _sr_pos        = build_positional_index(_sr_lem_docs)
+        _sr_vocab_stem = sorted(_sr_inv_stem.keys())
+        _sr_kgram      = build_kgram_index(_sr_vocab_stem, k=2)
+
+        # ── Technique selector ────────────────────────────────────────────────
+        st.markdown("#### 🎛️ Select Retrieval Technique")
+        technique = st.selectbox(
+            "Retrieval technique",
+            [
+                "Single Term  —  Inverted Index",
+                "Boolean AND",
+                "Boolean OR",
+                "Boolean NOT",
+                "Phrase  —  Biword Index",
+                "Phrase  —  Positional Index",
+                "Wildcard  (use * as wildcard)",
+                "Spelling Correction",
+                "Phonetic  (Soundex)",
+            ],
+            label_visibility="collapsed",
+        )
+
+        st.markdown("---")
+
+        # ── Query input (context-sensitive label) ─────────────────────────────
+        if "Wildcard" in technique:
+            query_val, query_ph = "inf*", "e.g.  inf*  or  *index*"
+        elif "Boolean AND" in technique:
+            query_val, query_ph = "information retrieval", "term1  term2  … (all must match)"
+        elif "Boolean OR" in technique:
+            query_val, query_ph = "stemming lemmatization", "term1  term2  … (any must match)"
+        elif "Boolean NOT" in technique:
+            query_val, query_ph = "stemming", "term to exclude from all docs"
+        elif "Phrase" in technique:
+            query_val, query_ph = "information retrieval", "exact phrase, e.g.  positional index"
+        elif "Spelling" in technique:
+            query_val, query_ph = "informaton", "misspelled word"
+        elif "Phonetic" in technique:
+            query_val, query_ph = "retrieve", "word to match phonetically"
+        else:
+            query_val, query_ph = "information", "single search term"
+
+        query_in = st.text_input("🔎 Enter your query", value=query_val, placeholder=query_ph)
+
+        if query_in.strip():
+            q_raw = query_in.strip().lower()
+            t0    = time.perf_counter()
+
+            # ── Execute retrieval ─────────────────────────────────────────────
+            result_doc_ids = []
+            extra_info     = ""
+
+            if "Single Term" in technique:
+                term = stemmer.stem(re.sub(r"[^a-z0-9]", "", q_raw.split()[0]))
+                result_doc_ids = sorted(_sr_inv_stem.get(term, []))
+                extra_info = f"Stemmed term: **`{term}`**"
+
+            elif "Boolean AND" in technique:
+                terms = [stemmer.stem(re.sub(r"[^a-z0-9]", "", w))
+                         for w in q_raw.split() if re.sub(r"[^a-z0-9]", "", w)]
+                if terms:
+                    sets = [set(_sr_inv_stem.get(t, [])) for t in terms]
+                    result_doc_ids = sorted(set.intersection(*sets)) if sets else []
+                    extra_info = f"AND of stemmed terms: {terms}"
+
+            elif "Boolean OR" in technique:
+                terms = [stemmer.stem(re.sub(r"[^a-z0-9]", "", w))
+                         for w in q_raw.split() if re.sub(r"[^a-z0-9]", "", w)]
+                if terms:
+                    sets = [set(_sr_inv_stem.get(t, [])) for t in terms]
+                    result_doc_ids = sorted(set.union(*sets)) if sets else []
+                    extra_info = f"OR of stemmed terms: {terms}"
+
+            elif "Boolean NOT" in technique:
+                term = stemmer.stem(re.sub(r"[^a-z0-9]", "", q_raw.split()[0]))
+                excluded = set(_sr_inv_stem.get(term, []))
+                result_doc_ids = sorted(set(range(len(raw_docs))) - excluded)
+                extra_info = f"Docs NOT containing stemmed term **`{term}`**"
+
+            elif "Biword" in technique:
+                words = re.sub(r"[^a-z\s]", "", q_raw).split()
+                lq    = " ".join(lemmatizer.lemmatize(w) for w in words if w)
+                result_doc_ids = phrase_query_biword(lq, _sr_biword)
+                extra_info = f"Lemmatized phrase: **`{lq}`**"
+
+            elif "Positional" in technique:
+                words = re.sub(r"[^a-z\s]", "", q_raw).split()
+                lq    = " ".join(lemmatizer.lemmatize(w) for w in words if w)
+                result_doc_ids = phrase_query_positional(lq, _sr_pos)
+                extra_info = f"Lemmatized phrase: **`{lq}`**"
+
+            elif "Wildcard" in technique:
+                matched_terms  = wildcard_search(q_raw, _sr_kgram, set(_sr_vocab_stem))
+                hit_sets       = [set(_sr_inv_stem.get(t, [])) for t in matched_terms]
+                result_doc_ids = sorted(set.union(*hit_sets)) if hit_sets else []
+                extra_info = f"Matched {len(matched_terms)} term(s): `{', '.join(matched_terms[:12])}`{'…' if len(matched_terms)>12 else ''}"
+
+            elif "Spelling" in technique:
+                sugg = spelling_correction(q_raw.split()[0], _sr_vocab_stem, max_dist=2)
+                if sugg:
+                    hit_sets       = [set(_sr_inv_stem.get(t, [])) for t in sugg]
+                    result_doc_ids = sorted(set.union(*hit_sets)) if hit_sets else []
+                    extra_info = f"Suggestions (edit dist ≤ 2): `{', '.join(sugg)}`"
+                else:
+                    extra_info = "No close matches found in vocabulary."
+
+            elif "Phonetic" in technique:
+                matched_terms  = phonetic_search(q_raw.split()[0], _sr_vocab_stem)
+                hit_sets       = [set(_sr_inv_stem.get(t, [])) for t in matched_terms]
+                result_doc_ids = sorted(set.union(*hit_sets)) if hit_sets else []
+                sdx = soundex(q_raw.split()[0])
+                extra_info = f"Soundex code: **`{sdx}`** — matched terms: `{', '.join(matched_terms)}`"
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+
+            # ── Display results ───────────────────────────────────────────────
+            st.markdown(f"**Technique:** {technique}")
+            if extra_info:
+                st.markdown(extra_info)
+
+            m_col1, m_col2 = st.columns(2)
+            m_col1.metric("Results", len(result_doc_ids))
+            m_col2.metric("Query time", f"{elapsed_ms:.3f} ms")
+
+            if result_doc_ids:
+                st.markdown(f'<div class="result-box success">✅ Found <strong>{len(result_doc_ids)}</strong> matching document(s)</div>', unsafe_allow_html=True)
+                for doc_id in result_doc_ids:
+                    doc_name    = doc_id_map.get(doc_id, str(doc_id))
+                    doc_text    = list(raw_docs.values())[doc_id] if doc_id < len(raw_docs) else ""
+                    snippet     = doc_text[:200].replace("\n", " ")
+                    snippet_hl  = snippet + ("…" if len(doc_text) > 200 else "")
+                    with st.expander(f"📄 {doc_name}"):
+                        st.markdown(f'<div style="background:#f8f9ff;border-radius:8px;padding:0.8rem;font-size:0.88rem;line-height:1.6">{snippet_hl}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="result-box info">ℹ️ No documents matched this query.</div>', unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 2 – Preprocessing
+# ════════════════════════════════════════════════════════════════════════════
+with tabs[2]:
     st.markdown('<p class="section-header">Text Preprocessing Pipeline</p>', unsafe_allow_html=True)
 
     if not raw_docs:
@@ -671,9 +922,9 @@ e.g. "running" → <code>run</code>
         st.markdown('<div class="result-box success">✅ <strong>Verdict:</strong> Lemmatization is more suitable for this dataset — it preserves semantic meaning and returns valid dictionary words, improving retrieval precision.</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 2 – Phrase Query
+# TAB 3 – Phrase Query
 # ════════════════════════════════════════════════════════════════════════════
-with tabs[2]:
+with tabs[3]:
     st.markdown('<p class="section-header">Phrase Query Processing</p>', unsafe_allow_html=True)
 
     if not raw_docs:
@@ -745,9 +996,9 @@ with tabs[2]:
             st.markdown('<div class="result-box warn">⚠️ <strong>False positive example:</strong> The query "black cat" stored as biword matches any doc with both "black" and "cat" consecutively, but a doc containing "black dog and cat" could cause issues in longer decomposed phrase chains. Positional index verifies exact adjacency at every position, eliminating false positives.</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 3 – Dictionary
+# TAB 4 – Dictionary
 # ════════════════════════════════════════════════════════════════════════════
-with tabs[3]:
+with tabs[4]:
     st.markdown('<p class="section-header">Dictionary Search: BST vs B-Tree</p>', unsafe_allow_html=True)
 
     if not raw_docs:
@@ -811,9 +1062,9 @@ with tabs[3]:
             st.markdown('<div class="result-box success">✅ <strong>Verdict:</strong> B-Tree outperforms BST due to guaranteed balance — especially important for large, sorted vocabularies typical in IR systems.</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 4 – Tolerant Retrieval
+# TAB 5 – Tolerant Retrieval
 # ════════════════════════════════════════════════════════════════════════════
-with tabs[4]:
+with tabs[5]:
     st.markdown('<p class="section-header">Tolerant Retrieval</p>', unsafe_allow_html=True)
 
     if not raw_docs:
@@ -896,9 +1147,9 @@ with tabs[4]:
                     st.markdown('<div class="result-box info">No phonetically similar terms in vocabulary.</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
-# TAB 5 – Inference & Discussion
+# TAB 6 – Inference & Discussion
 # ════════════════════════════════════════════════════════════════════════════
-with tabs[5]:
+with tabs[6]:
     st.markdown('<p class="section-header">Inference & Discussion</p>', unsafe_allow_html=True)
 
     sections = [
