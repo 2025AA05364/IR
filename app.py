@@ -1100,7 +1100,7 @@ with tabs[4]:
 
         st.markdown("---")
         st.markdown("#### ⚡ Performance Benchmark — 5 Search Queries")
-        st.caption("The table below runs 5 representative queries through both structures and compares comparisons and time.")
+        st.caption("Auto-selects 5 representative terms from the vocabulary, or enter your own below.")
 
         # Always pick 5 spread-out terms from vocabulary so the benchmark auto-runs
         def _pick_5(v):
@@ -1108,7 +1108,6 @@ with tabs[4]:
                 return v
             step = max(1, len(v) // 5)
             picks = [v[i * step] for i in range(5)]
-            # Try to include domain-relevant terms if present
             prefer = ["information", "retrieval", "index", "search", "document",
                       "inform", "retriev", "indic", "search", "document"]
             for p in prefer:
@@ -1118,17 +1117,18 @@ with tabs[4]:
 
         auto_5 = _pick_5(vocab)
 
-        with st.expander("✏️ Customise query terms (optional)", expanded=False):
-            custom_input = st.text_input(
-                "Enter comma-separated terms (leave blank to use auto-selected 5)",
-                value="", key="bst_custom",
-                placeholder="e.g.  index, retriev, token, stem, wildcard"
-            )
+        # Query input — always visible, pre-filled with auto-5
+        st.markdown("**🔎 Enter 5 query terms to benchmark:**")
+        q_cols = st.columns(5)
+        user_queries = []
+        for i, col in enumerate(q_cols):
+            default = auto_5[i] if i < len(auto_5) else ""
+            val = col.text_input(f"Query {i+1}", value=default, key=f"bst_q{i}")
+            user_queries.append(val.strip().lower())
 
-        custom_list = [q.strip().lower() for q in custom_input.split(",") if q.strip()] if custom_input.strip() else []
-        queries = custom_list if custom_list else auto_5
+        queries = [q for q in user_queries if q]
 
-        # Ensure at least 5
+        # Pad to at least 5 from vocab if user left some blank
         if len(queries) < 5 and vocab:
             extras = [t for t in vocab if t not in queries]
             queries = (queries + extras)[:5]
