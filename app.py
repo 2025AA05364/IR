@@ -149,6 +149,18 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] .stMarkdown h2,
 [data-testid="stSidebar"] .stMarkdown h3 { color: #ffffff !important; }
 [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.15) !important; }
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stFileUploader label,
+[data-testid="stSidebar"] .stFileUploader span,
+[data-testid="stSidebar"] .stFileUploader p,
+[data-testid="stSidebar"] small,
+[data-testid="stSidebar"] .stCaption { color: #c8d0e8 !important; }
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    background: rgba(255,255,255,0.07) !important;
+    border: 1px dashed rgba(255,255,255,0.3) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * { color: #c8d0e8 !important; }
 
 /* ── Download button ─────────────────────────────────────────── */
 .stDownloadButton > button {
@@ -537,7 +549,7 @@ def _extract_text_from_bytes(name: str, data: bytes) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # Session state
 # ─────────────────────────────────────────────────────────────────────────────
-for key in ["raw_docs", "doc_names"]:
+for key in ["raw_docs", "doc_names", "dataset_mode"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -548,10 +560,10 @@ with st.sidebar:
     st.markdown("## 📂 Dataset")
     st.markdown("---")
 
-    # Download sample dataset
-    st.markdown("**Download sample dataset**")
+    # ── Download sample ───────────────────────────────────────────────────────
+    st.markdown("**⬇️ Download sample dataset**")
     st.download_button(
-        label="⬇️  Download 15 sample .txt files",
+        label="Download 15 sample .txt files (ZIP)",
         data=make_sample_zip(),
         file_name="IR_sample_dataset.zip",
         mime="application/zip",
@@ -559,41 +571,66 @@ with st.sidebar:
     )
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Upload
-    st.markdown("**Upload your own documents**")
-    st.caption("Supported: `.txt` · `.csv` · `.pdf` · `.docx` · `.zip` (containing any of the above)")
-    uploaded_files = st.file_uploader(
-        "Upload documents",
-        type=["txt", "csv", "pdf", "docx", "zip"],
-        accept_multiple_files=True,
-        label_visibility="collapsed",
+    # ── Mode selector ─────────────────────────────────────────────────────────
+    dataset_mode = st.radio(
+        "Dataset source",
+        ["📚 Use built-in demo (15 docs)", "📤 Upload my own files"],
+        index=0,
+        key="dataset_mode_radio",
     )
 
-    use_demo = st.checkbox("Use built-in demo dataset", value=True)
+    # Clear stored docs whenever the user switches mode
+    if st.session_state.dataset_mode != dataset_mode:
+        st.session_state.dataset_mode = dataset_mode
+        st.session_state.raw_docs  = None
+        st.session_state.doc_names = None
+
     st.markdown("---")
 
-    if uploaded_files:
-        raw_docs = {}
-        parse_errors = []
-        for f in uploaded_files:
-            data = f.read()
-            parsed = _extract_text_from_bytes(f.name, data)
-            for doc_name, text in parsed.items():
-                if text.strip():
-                    raw_docs[doc_name] = text
-                else:
-                    parse_errors.append(doc_name)
-        if raw_docs:
-            st.session_state.raw_docs = raw_docs
-            st.session_state.doc_names = list(raw_docs.keys())
-            st.success(f"✅ {len(raw_docs)} document(s) loaded")
-        if parse_errors:
-            st.warning(f"⚠️ Skipped {len(parse_errors)} empty/unreadable file(s).")
-    elif use_demo:
-        st.session_state.raw_docs = DEMO_DOCS
+    if dataset_mode == "📚 Use built-in demo (15 docs)":
+        # Always load demo (no stale upload can block it)
+        st.session_state.raw_docs  = DEMO_DOCS
         st.session_state.doc_names = list(DEMO_DOCS.keys())
-        st.info(f"📚 Demo: {len(DEMO_DOCS)} documents")
+        st.success(f"✅ Demo loaded — {len(DEMO_DOCS)} documents")
 
+    else:
+        st.markdown("**Supported formats:**")
+        st.markdown(
+            '<span style="color:#a0c4e8;font-size:0.82rem">'
+            ".txt &nbsp;·&nbsp; .csv &nbsp;·&nbsp; .pdf &nbsp;·&nbsp; .docx &nbsp;·&nbsp; .zip"
+            "</span>",
+            unsafe_allow_html=True,
+        )
+        uploaded_files = st.file_uploader(
+            "Upload documents",
+            type=["txt", "csv", "pdf", "docx", "zip"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+            key="uploader",
+        )
+
+        if uploaded_files:
+            raw_docs_upload = {}
+            parse_errors = []
+            for f in uploaded_files:
+                data = f.read()
+                parsed = _extract_text_from_bytes(f.name, data)
+                for doc_name, text in parsed.items():
+                    if text.strip():
+                        raw_docs_upload[doc_name] = text
+                    else:
+                        parse_errors.append(doc_name)
+            if raw_docs_upload:
+                st.session_state.raw_docs  = raw_docs_upload
+                st.session_state.doc_names = list(raw_docs_upload.keys())
+                st.success(f"✅ {len(raw_docs_upload)} document(s) loaded")
+            if parse_errors:
+                st.warning(f"⚠️ Skipped {len(parse_errors)} empty/unreadable file(s).")
+        else:
+            if st.session_state.raw_docs is None:
+                st.info("Upload files above to get started.")
+
+    st.markdown("---")
     st.markdown("### ℹ️ About")
     st.markdown("""
 **IR Assignment 1**
@@ -645,7 +682,7 @@ if raw_docs:
 tabs = st.tabs([
     "📄 Documents",
     "🔍 Search & Retrieval",
-    " Preprocessing",
+    "🔧 Preprocessing",
     "🔎 Phrase Query",
     "🌲 BST vs B-Tree",
     "🩹 Tolerant Retrieval",
@@ -686,7 +723,6 @@ with tabs[1]:
         _sr_stem_docs  = {i: basic_preprocess(tokenize(t), stem=True)  for i, t in enumerate(raw_docs.values())}
         _sr_lem_docs   = {i: basic_preprocess(tokenize(t), lemma=True) for i, t in enumerate(raw_docs.values())}
         _sr_inv_stem   = build_inverted_index(_sr_stem_docs)
-        _sr_inv_lem    = build_inverted_index(_sr_lem_docs)
         _sr_biword     = build_biword_index(_sr_lem_docs)
         _sr_pos        = build_positional_index(_sr_lem_docs)
         _sr_vocab_stem = sorted(_sr_inv_stem.keys())
@@ -1017,41 +1053,71 @@ with tabs[4]:
         st.markdown(f'<div class="result-box info">ℹ️ Dictionary built with <strong>{len(vocab)}</strong> unique terms from {len(raw_docs)} documents.</div>', unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("#### ⚡ Performance Benchmark")
-        default_q = ", ".join(vocab[:8]) if vocab else "information, retrieval"
-        query_input = st.text_input("Enter comma-separated terms to benchmark", value=default_q)
-        queries = [q.strip().lower() for q in query_input.split(",") if q.strip()]
+        st.markdown("#### ⚡ Performance Benchmark — 5 Search Queries")
+        st.caption("The table below runs 5 representative queries through both structures and compares comparisons and time.")
 
-        if queries:
-            rows = []
-            for q in queries:
-                t0 = time.perf_counter(); bst_res, bst_c = bst.search(q);   bst_us = (time.perf_counter()-t0)*1e6
-                t0 = time.perf_counter(); bt_res,  bt_c  = btree.search(q); bt_us  = (time.perf_counter()-t0)*1e6
-                rows.append({"Term": q,
-                              "BST Time (µs)": f"{bst_us:.2f}", "BST Comparisons": bst_c, "BST Docs": len(bst_res),
-                              "B-Tree Time (µs)": f"{bt_us:.2f}", "B-Tree Comparisons": bt_c, "B-Tree Docs": len(bt_res)})
+        # Always pick 5 spread-out terms from vocabulary so the benchmark auto-runs
+        def _pick_5(v):
+            if len(v) < 5:
+                return v
+            step = max(1, len(v) // 5)
+            picks = [v[i * step] for i in range(5)]
+            # Try to include domain-relevant terms if present
+            prefer = ["information", "retrieval", "index", "search", "document",
+                      "inform", "retriev", "indic", "search", "document"]
+            for p in prefer:
+                if p in v and p not in picks:
+                    picks[picks.index(picks[-1])] = p
+            return picks[:5]
 
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        auto_5 = _pick_5(vocab)
 
-            avg_bst = sum(r["BST Comparisons"] for r in rows) / len(rows)
-            avg_bt  = sum(r["B-Tree Comparisons"] for r in rows) / len(rows)
+        with st.expander("✏️ Customise query terms (optional)", expanded=False):
+            custom_input = st.text_input(
+                "Enter comma-separated terms (leave blank to use auto-selected 5)",
+                value="", key="bst_custom",
+                placeholder="e.g.  index, retriev, token, stem, wildcard"
+            )
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Avg BST Comparisons",    f"{avg_bst:.1f}")
-            m2.metric("Avg B-Tree Comparisons", f"{avg_bt:.1f}")
-            m3.metric("Vocab Size",             len(vocab))
-            m4.metric("Queries Tested",         len(queries))
+        custom_list = [q.strip().lower() for q in custom_input.split(",") if q.strip()] if custom_input.strip() else []
+        queries = custom_list if custom_list else auto_5
 
-            st.markdown("---")
-            c1, c2 = st.columns(2)
-            c1.markdown("""
+        # Ensure at least 5
+        if len(queries) < 5 and vocab:
+            extras = [t for t in vocab if t not in queries]
+            queries = (queries + extras)[:5]
+
+        rows = []
+        for q in queries:
+            t0 = time.perf_counter(); bst_res, bst_c = bst.search(q);   bst_us = (time.perf_counter()-t0)*1e6
+            t0 = time.perf_counter(); bt_res,  bt_c  = btree.search(q); bt_us  = (time.perf_counter()-t0)*1e6
+            found = "✅ Found" if bst_res else "❌ Not found"
+            rows.append({"#": len(rows)+1, "Query Term": q,
+                          "BST Time (µs)": f"{bst_us:.2f}", "BST Comparisons": bst_c, "BST Docs Found": len(bst_res),
+                          "B-Tree Time (µs)": f"{bt_us:.2f}", "B-Tree Comparisons": bt_c, "B-Tree Docs Found": len(bt_res),
+                          "Result": found})
+
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        avg_bst = sum(r["BST Comparisons"] for r in rows) / len(rows)
+        avg_bt  = sum(r["B-Tree Comparisons"] for r in rows) / len(rows)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Avg BST Comparisons",    f"{avg_bst:.1f}")
+        m2.metric("Avg B-Tree Comparisons", f"{avg_bt:.1f}")
+        m3.metric("Vocab Size",             len(vocab))
+        m4.metric("Queries Tested",         len(queries))
+
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        c1.markdown("""
 <div class="method-card">
 <h4>🌳 Binary Search Tree</h4>
 <strong>Time complexity:</strong> O(log n) avg, O(n) worst case<br>
 <strong>Weakness:</strong> Skewed on sorted insertion — no self-balancing<br>
 <strong>Use case:</strong> Small dictionaries, random insertion order
 </div>""", unsafe_allow_html=True)
-            c2.markdown("""
+        c2.markdown("""
 <div class="method-card">
 <h4>🌲 B-Tree (order 3)</h4>
 <strong>Time complexity:</strong> O(log<sub>t</sub> n) guaranteed<br>
@@ -1059,7 +1125,7 @@ with tabs[4]:
 <strong>Use case:</strong> Large IR dictionaries, database indexes
 </div>""", unsafe_allow_html=True)
 
-            st.markdown('<div class="result-box success">✅ <strong>Verdict:</strong> B-Tree outperforms BST due to guaranteed balance — especially important for large, sorted vocabularies typical in IR systems.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="result-box success">✅ <strong>Verdict:</strong> B-Tree outperforms BST due to guaranteed balance — especially important for large, sorted vocabularies typical in IR systems.</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
 # TAB 5 – Tolerant Retrieval
