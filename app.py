@@ -140,7 +140,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     color: #e94560;
 }
 
-/* ── Sidebar ─────────────────────────────────────────────────── */
+/* ── Sidebar base ────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
 }
@@ -149,18 +149,64 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] .stMarkdown h2,
 [data-testid="stSidebar"] .stMarkdown h3 { color: #ffffff !important; }
 [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.15) !important; }
-[data-testid="stSidebar"] .stRadio label,
-[data-testid="stSidebar"] .stFileUploader label,
-[data-testid="stSidebar"] .stFileUploader span,
-[data-testid="stSidebar"] .stFileUploader p,
 [data-testid="stSidebar"] small,
-[data-testid="stSidebar"] .stCaption { color: #c8d0e8 !important; }
-[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1px dashed rgba(255,255,255,0.3) !important;
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] .stCaption * { color: #a0b4cc !important; font-size: 0.8rem !important; }
+
+/* ── Radio buttons — clear selected highlight ────────────────── */
+[data-testid="stSidebar"] .stRadio > div { gap: 0.4rem !important; }
+[data-testid="stSidebar"] .stRadio label {
+    display: flex !important;
+    align-items: center !important;
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
     border-radius: 8px !important;
+    padding: 0.55rem 0.9rem !important;
+    cursor: pointer !important;
+    transition: background 0.15s !important;
+    color: #c8d8f0 !important;
+    font-size: 0.88rem !important;
+    font-weight: 500 !important;
+    width: 100% !important;
 }
-[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * { color: #c8d0e8 !important; }
+[data-testid="stSidebar"] .stRadio label:hover {
+    background: rgba(255,255,255,0.12) !important;
+    border-color: rgba(255,255,255,0.25) !important;
+}
+/* Selected radio option gets a vivid teal highlight */
+[data-testid="stSidebar"] .stRadio label:has(input:checked) {
+    background: linear-gradient(135deg, #11998e55, #38ef7d33) !important;
+    border: 1.5px solid #38ef7d !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+}
+[data-testid="stSidebar"] .stRadio label:has(input:checked) * { color: #ffffff !important; }
+/* Hide the native radio circle — the border highlight is enough */
+[data-testid="stSidebar"] .stRadio input[type="radio"] { accent-color: #38ef7d; }
+
+/* ── File uploader dropzone ──────────────────────────────────── */
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1.5px dashed rgba(100,200,255,0.45) !important;
+    border-radius: 10px !important;
+}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {
+    color: #c8d8f0 !important;
+}
+/* "Browse files" button inside uploader */
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button,
+[data-testid="stSidebar"] [data-testid="baseButton-secondary"] {
+    background: linear-gradient(135deg, #2193b0, #6dd5ed) !important;
+    color: #0a1a2a !important;
+    border: none !important;
+    border-radius: 7px !important;
+    font-weight: 600 !important;
+    padding: 0.35rem 1rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button *,
+[data-testid="stSidebar"] [data-testid="baseButton-secondary"] * {
+    color: #0a1a2a !important;
+}
 
 /* ── Download button ─────────────────────────────────────────── */
 .stDownloadButton > button {
