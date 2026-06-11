@@ -360,12 +360,27 @@ class BSTNode:
 
 class BST:
     def __init__(self): self.root = None
-    def insert(self, key, postings): self.root = self._ins(self.root, key, postings)
-    def _ins(self, node, key, postings):
-        if node is None: return BSTNode(key, postings)
-        if key < node.key: node.left = self._ins(node.left, key, postings)
-        elif key > node.key: node.right = self._ins(node.right, key, postings)
-        return node
+
+    def insert(self, key, postings):
+        if self.root is None:
+            self.root = BSTNode(key, postings)
+            return
+        node = self.root
+        while True:
+            if key == node.key:
+                node.postings = postings
+                return
+            elif key < node.key:
+                if node.left is None:
+                    node.left = BSTNode(key, postings)
+                    return
+                node = node.left
+            else:
+                if node.right is None:
+                    node.right = BSTNode(key, postings)
+                    return
+                node = node.right
+
     def search(self, key):
         comps, node = 0, self.root
         while node:
@@ -522,7 +537,7 @@ def make_sample_zip():
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-format file parser
 # ─────────────────────────────────────────────────────────────────────────────
-def _extract_text_from_bytes(name: str, data: bytes) -> dict:
+def _extract_text_from_bytes(name: str, data: bytes, csv_rows_as_docs: bool = False) -> dict:
     """Return {doc_name: text_content} for a single uploaded file.
     Supported: .txt  .csv  .pdf  .docx  .zip (recursively parsed)
     """
@@ -535,13 +550,13 @@ def _extract_text_from_bytes(name: str, data: bytes) -> dict:
     elif ext == ".csv":
         try:
             df = pd.read_csv(io.BytesIO(data), dtype=str).fillna("")
-            # Each row becomes its own document; fall back to whole-file if tiny
-            if len(df) > 1:
+            if csv_rows_as_docs and len(df) > 1:
                 for idx, row in df.iterrows():
                     results[f"{name}__row{idx+1}"] = " ".join(row.astype(str).tolist())
             else:
+                # Whole file as one document (default)
                 results[name] = " ".join(df.to_string(index=False).split())
-        except Exception as e:
+        except Exception:
             results[name] = data.decode("utf-8", errors="ignore")
 
     elif ext == ".pdf":
@@ -577,7 +592,7 @@ def _extract_text_from_bytes(name: str, data: bytes) -> dict:
                         continue  # skip directories
                     inner_data = zf.read(entry)
                     inner_name = os.path.basename(entry) or entry
-                    nested = _extract_text_from_bytes(inner_name, inner_data)
+                    nested = _extract_text_from_bytes(inner_name, inner_data, csv_rows_as_docs)
                     results.update(nested)
         except Exception as e:
             results[name] = f"(ZIP parse error: {e})"
@@ -656,11 +671,16 @@ with st.sidebar:
         )
 
         if uploaded_files:
+            csv_rows_as_docs = st.checkbox(
+                "Treat each CSV row as a separate document",
+                value=False,
+                help="OFF = whole CSV is one document (recommended). ON = each row becomes its own document.",
+            )
             raw_docs_upload = {}
             parse_errors = []
             for f in uploaded_files:
                 data = f.read()
-                parsed = _extract_text_from_bytes(f.name, data)
+                parsed = _extract_text_from_bytes(f.name, data, csv_rows_as_docs=csv_rows_as_docs)
                 for doc_name, text in parsed.items():
                     if text.strip():
                         raw_docs_upload[doc_name] = text
