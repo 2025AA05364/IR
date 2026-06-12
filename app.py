@@ -578,7 +578,30 @@ def _extract_text_from_bytes(name: str, data: bytes, csv_rows_as_docs: bool = Fa
         if _DOCX_OK:
             try:
                 doc = DocxDocument(io.BytesIO(data))
-                results[name] = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                parts = []
+                # Top-level paragraphs
+                for p in doc.paragraphs:
+                    if p.text.strip():
+                        parts.append(p.text.strip())
+                # Tables (rows × cells)
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            cell_text = cell.text.strip()
+                            if cell_text and cell_text not in parts:
+                                parts.append(cell_text)
+                # Headers and footers
+                for section in doc.sections:
+                    for hf in [section.header, section.footer,
+                               section.even_page_header, section.even_page_footer,
+                               section.first_page_header, section.first_page_footer]:
+                        try:
+                            for p in hf.paragraphs:
+                                if p.text.strip():
+                                    parts.append(p.text.strip())
+                        except Exception:
+                            pass
+                results[name] = "\n".join(parts) if parts else "(no extractable text)"
             except Exception as e:
                 results[name] = f"(DOCX parse error: {e})"
         else:
