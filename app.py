@@ -1382,11 +1382,4 @@ with tabs[6]:
             st.markdown(body)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Footer
 # ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown("""
-<div style="text-align:center;opacity:0.55;font-size:0.82rem;padding:0.5rem 0">
-  IR Assignment 1 &nbsp;·&nbsp; Group 52 &nbsp;·&nbsp; AIMLCZG537 / DSECLZG537 &nbsp;·&nbsp; S2-2025
-</div>
-""", unsafe_allow_html=True)
