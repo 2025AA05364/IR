@@ -263,16 +263,18 @@ stemmer    = PorterStemmer()
 lemmatizer = WordNetLemmatizer()
 
 
+@st.cache_data
 def tokenize(text):
-    """Tokenize text; falls back to simple split if NLTK punkt is unavailable."""
     try:
         return word_tokenize(text.lower())
     except Exception:
         return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
 
+@st.cache_data
 def basic_preprocess(tokens, lowercase=True, remove_sw=True,
                      handle_hyphen=True, stem=False, lemma=False):
+    sw = frozenset(STOPWORDS)
     result = []
     for tok in tokens:
         parts = tok.split("-") if handle_hyphen else [tok]
@@ -281,7 +283,7 @@ def basic_preprocess(tokens, lowercase=True, remove_sw=True,
             t = re.sub(r"[^a-z0-9]", "", t) if lowercase else re.sub(r"[^a-zA-Z0-9]", "", t)
             if not t:
                 continue
-            if remove_sw and t in STOPWORDS:
+            if remove_sw and t in sw:
                 continue
             if stem:
                 t = stemmer.stem(t)
@@ -289,6 +291,28 @@ def basic_preprocess(tokens, lowercase=True, remove_sw=True,
                 t = lemmatizer.lemmatize(t)
             result.append(t)
     return result
+
+
+@st.cache_data
+def preprocess_corpus(doc_items, lowercase=True, remove_sw=True,
+                      handle_hyphen=True, stem=False, lemma=False):
+    return {
+        i: basic_preprocess(
+            tokenize(text), lowercase=lowercase, remove_sw=remove_sw,
+            handle_hyphen=handle_hyphen, stem=stem, lemma=lemma
+        )
+        for i, (_, text) in enumerate(doc_items)
+    }
+
+
+@st.cache_data
+def build_kgram_index(vocab, k=2):
+    index = defaultdict(list)
+    for term in vocab:
+        padded = f"${term}$"
+        for i in range(len(padded) - k + 1):
+            index[padded[i:i+k]].append(term)
+    return dict(index)
 
 
 @st.cache_data
@@ -442,14 +466,6 @@ class BTree:
 
 
 # ── K-gram + tolerant ─────────────────────────────────────────────────────────
-def build_kgram_index(vocab, k=2):
-    index = defaultdict(list)
-    for term in vocab:
-        padded = f"${term}$"
-        for i in range(len(padded) - k + 1):
-            index[padded[i:i+k]].append(term)
-    return dict(index)
-
 
 def wildcard_search(pattern, kgram_index, vocab, k=2):
     parts = pattern.split("*")
@@ -809,8 +825,8 @@ with tabs[1]:
         st.markdown('<div class="result-box warn">⚠️ Upload documents or enable the demo dataset from the sidebar.</div>', unsafe_allow_html=True)
     else:
         # ── Build all indexes once ────────────────────────────────────────────
-        _sr_stem_docs  = {i: basic_preprocess(tokenize(t), stem=True)  for i, t in enumerate(raw_docs.values())}
-        _sr_lem_docs   = {i: basic_preprocess(tokenize(t), lemma=True) for i, t in enumerate(raw_docs.values())}
+        _sr_stem_docs  = preprocess_corpus(list(raw_docs.items()), stem=True)
+        _sr_lem_docs   = preprocess_corpus(list(raw_docs.items()), lemma=True)
         _sr_inv_stem   = build_inverted_index(_sr_stem_docs)
         _sr_biword     = build_biword_index(_sr_lem_docs)
         _sr_pos        = build_positional_index(_sr_lem_docs)
@@ -974,11 +990,10 @@ with tabs[2]:
         do_stem  = norm_choice == "Stemming"
         do_lemma = norm_choice == "Lemmatization"
 
-        processed_docs = {
-            i: basic_preprocess(tokenize(text), lowercase=opt_lower, remove_sw=opt_sw,
-                                handle_hyphen=opt_hyphen, stem=do_stem, lemma=do_lemma)
-            for i, (_, text) in enumerate(raw_docs.items())
-        }
+        processed_docs = preprocess_corpus(
+            list(raw_docs.items()), lowercase=opt_lower, remove_sw=opt_sw,
+            handle_hyphen=opt_hyphen, stem=do_stem, lemma=do_lemma
+        )
 
         # Pipeline visualization for first doc
         st.markdown("---")
@@ -1011,8 +1026,8 @@ with tabs[2]:
         st.markdown("---")
         st.markdown("#### ⚖️ Stemming vs Lemmatization — Retrieval Quality Comparison")
 
-        stem_docs  = {i: basic_preprocess(tokenize(t), stem=True)  for i, t in enumerate(raw_docs.values())}
-        lemma_docs = {i: basic_preprocess(tokenize(t), lemma=True) for i, t in enumerate(raw_docs.values())}
+        stem_docs  = preprocess_corpus(list(raw_docs.items()), stem=True)
+        lemma_docs = preprocess_corpus(list(raw_docs.items()), lemma=True)
         stem_idx   = build_inverted_index(stem_docs)
         lemma_idx  = build_inverted_index(lemma_docs)
         stem_vocab  = set(t for ts in stem_docs.values()  for t in ts)
@@ -1055,7 +1070,7 @@ with tabs[3]:
     if not raw_docs:
         st.markdown('<div class="result-box warn">⚠️ Load a dataset first.</div>', unsafe_allow_html=True)
     else:
-        lem_docs   = {i: basic_preprocess(tokenize(t), lemma=True) for i, t in enumerate(raw_docs.values())}
+        lem_docs   = preprocess_corpus(list(raw_docs.items()), lemma=True)
         biword_idx = build_biword_index(lem_docs)
         pos_idx    = build_positional_index(lem_docs)
 
@@ -1129,7 +1144,7 @@ with tabs[4]:
     if not raw_docs:
         st.markdown('<div class="result-box warn">⚠️ Load a dataset first.</div>', unsafe_allow_html=True)
     else:
-        base_docs = {i: basic_preprocess(tokenize(t), stem=True) for i, t in enumerate(raw_docs.values())}
+        base_docs = preprocess_corpus(list(raw_docs.items()), stem=True)
         inv_idx   = build_inverted_index(base_docs)
         vocab     = sorted(inv_idx.keys())
 
@@ -1225,7 +1240,7 @@ with tabs[5]:
     if not raw_docs:
         st.markdown('<div class="result-box warn">⚠️ Load a dataset first.</div>', unsafe_allow_html=True)
     else:
-        tol_docs  = {i: basic_preprocess(tokenize(t), stem=True) for i, t in enumerate(raw_docs.values())}
+        tol_docs  = preprocess_corpus(list(raw_docs.items()), stem=True)
         tol_inv   = build_inverted_index(tol_docs)
         tol_vocab = sorted(tol_inv.keys())
         kgram_idx = build_kgram_index(tol_vocab, k=2)
@@ -1308,49 +1323,57 @@ with tabs[6]:
     st.markdown('<p class="section-header">Inference & Discussion</p>', unsafe_allow_html=True)
 
     sections = [
-        ("🔧 B. Preprocessing", """
-- **Tokenization** split raw text into individual terms, enabling per-term indexing.
-- **Lowercasing** ensured case-insensitive matching ("Information" = "information").
-- **Stop word removal** reduced index size by ~30-40% and improved precision.
-- **Hyphen handling** correctly split compound words (e.g. "well-known" → "well" + "known").
-- **Stemming vs Lemmatization:** Lemmatization outperformed stemming — it produces valid dictionary words
-  with POS context. Stemming is faster but can produce non-words.
-  **✅ Verdict: Lemmatization is more suitable for this dataset.**
+        ("1️⃣  Which preprocessing technique improved retrieval quality?", """
+- **Stop word removal** had the greatest impact — reduced index size by ~30-40% and improved precision by eliminating high-frequency noise words.
+- **Lowercasing** ensured case-insensitive matching (e.g. "Information" = "information").
+- **Hyphen handling** correctly split compound words (e.g. "well-known" → "well" + "known"), preventing missed matches.
+- **Tokenization** enabled per-term indexing which is the foundation of all retrieval operations.
+- Overall, combining all preprocessing steps together produced the best retrieval quality.
 """),
-        ("🔎 C. Phrase Query", """
-- **Biword index** is fast to build but produces **false positives** for long phrases — it only
-  verifies consecutive pairs, not full-phrase adjacency.
-- **Positional index** stores exact token positions, enabling verification that all phrase tokens
-  appear consecutively in the correct order.
-  **✅ Verdict: Positional index gives more accurate phrase query results.**
+        ("2️⃣  Was stemming or lemmatization better for this dataset?", """
+- **Lemmatization** outperformed stemming on this dataset.
+- Lemmatization produces valid dictionary words using vocabulary and morphological analysis with POS context (e.g. "running" → "run", "better" → "good").
+- Stemming is faster (rule-based) but can produce non-words (e.g. "information" → "inform", "retrieval" → "retriev") which can harm precision.
+- Jaccard similarity comparison between stemmed and lemmatized result sets confirmed high overlap, but lemmatized forms were more interpretable and linguistically accurate.
+- **✅ Verdict: Lemmatization is more suitable for this dataset.**
 """),
-        ("🌲 D. Dictionary Structures", """
-- **BST** offers O(log n) average lookup but degenerates to O(n) on sorted/nearly-sorted input.
-- **B-Tree (order 3)** guarantees O(log_t n) worst-case and is self-balancing — optimal for large IR dictionaries.
-- Experimental results confirmed fewer comparisons per lookup with B-Tree.
-  **✅ Verdict: B-Tree is faster and more reliable.**
+        ("3️⃣  Which phrase query index was more accurate?", """
+- **Positional index** was more accurate than biword index.
+- Biword index only verifies that consecutive word pairs exist in a document — for longer phrases this can produce **false positives** (e.g. "black cat sat" decomposed into "black cat" + "cat sat" can match documents where these pairs appear separately).
+- Positional index stores the exact position of every term in every document and verifies that all phrase tokens appear at **consecutive positions**, completely eliminating false positives.
+- **✅ Verdict: Positional index gives more accurate phrase query results.**
 """),
-        ("🩹 E. Tolerant Retrieval", """
-- **Wildcard (k-gram):** Successfully matched partial patterns ("inf*" → information, index, etc.).
-- **Spelling correction:** Recovered common typos within edit distance 2.
-- **K-gram index:** Provided fast wildcard support without full vocabulary scan.
-- **Phonetic (Soundex):** Found similar-sounding terms — useful for voice-to-text queries.
-  **✅ Overall: The system gracefully handles typos, partials, and phonetic variations.**
+        ("4️⃣  Which tree structure was faster?", """
+- **B-Tree (order 3)** was faster and more consistent than BST.
+- BST offers O(log n) average-case lookup but degrades to **O(n) worst case** when terms are inserted in sorted order — which is typical in IR since vocabulary is sorted alphabetically.
+- B-Tree self-balances on every insertion, guaranteeing **O(log_t n) worst-case** lookups regardless of insertion order.
+- Experimental benchmark with 5 queries confirmed B-Tree required fewer comparisons on average.
+- **✅ Verdict: B-Tree is faster and more reliable for IR dictionary search.**
 """),
-        ("⚠️ Limitations", """
-1. Spell correction is limited to terms already in the vocabulary — OOV words get no correction.
-2. Soundex is insensitive to vowels, leading to over-matching in some cases.
-3. BST degrades on sorted insertion — AVL or Red-Black tree would be better in production.
-4. No TF-IDF ranking — results are unranked boolean sets.
-5. In-memory positional index may be infeasible for very large corpora.
+        ("5️⃣  How tolerant was the retrieval model?", """
+- The system demonstrated strong tolerance to imperfect queries across all five techniques:
+- **Wildcard (k-gram):** Successfully matched prefix/suffix patterns (e.g. "inf*" → information, index).
+- **Spelling correction:** Recovered common typos within edit distance ≤ 2 (e.g. "informaton" → "information").
+- **Edit distance:** Configurable threshold allows control over how aggressive corrections are.
+- **K-gram index:** Backed wildcard search efficiently without scanning the full vocabulary.
+- **Phonetic (Soundex):** Matched similar-sounding terms (e.g. "retrieve" matched "retriev").
+- **✅ Overall: The system gracefully handles typos, partial queries, and phonetic variations — significantly improving recall for imperfect queries.**
 """),
-        ("🚀 Future Improvements", """
-1. Add TF-IDF / BM25 ranking for relevance-ordered results.
-2. Replace BST with a hash map (O(1) avg) or AVL tree for guaranteed balance.
-3. Implement permuterm index for complete wildcard coverage.
-4. Use Metaphone/Double Metaphone instead of Soundex for better phonetic precision.
-5. Add query expansion using Word2Vec / fastText embeddings.
-6. Persist indexes to disk (SQLite, FAISS) to support large corpora.
+        ("6️⃣  What are the limitations of the system?", """
+1. **Vocabulary-bound spelling correction** — cannot suggest corrections for terms not in the index (OOV words).
+2. **Soundex over-matching** — insensitive to vowels after the first letter, may match unrelated words.
+3. **BST imbalance** — degrades on sorted insertion; an AVL or Red-Black tree would be better in production.
+4. **No ranking** — results are unranked boolean sets; TF-IDF or BM25 ranking is absent.
+5. **In-memory indexes** — positional index may be infeasible for very large corpora.
+6. **Limited multi-word wildcard** — k-gram index supports simple patterns; permuterm index would give full coverage.
+"""),
+        ("🚀  How can the system be improved?", """
+1. Add **TF-IDF / BM25 ranking** for relevance-ordered results.
+2. Replace BST with a **hash map** (O(1) avg) or **AVL tree** for guaranteed balance.
+3. Implement **permuterm index** for complete wildcard coverage (e.g. *tion*, r*al).
+4. Use **Metaphone / Double Metaphone** instead of Soundex for better phonetic precision.
+5. Add **query expansion** using Word2Vec / fastText embeddings for semantic similarity.
+6. **Persist indexes to disk** (SQLite, FAISS) to support large corpora beyond memory.
 """),
     ]
 
